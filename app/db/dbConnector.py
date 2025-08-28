@@ -2,38 +2,54 @@ import signal
 import sys
 
 import psycopg2
-
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 from app.core.config import CONNECT_CONF
 
 
-class DbConnector:
-    def __init__(self):
-        self.connect_conf = CONNECT_CONF
-        self.connect()
 
-    def connect(self):
+class DbConnector:
+    _instance = None
+    _cursor = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    
+    def connect(self, connect_conf = CONNECT_CONF):
+
         self.connection = psycopg2.connect(
-            dbname=self.connect_conf['dbname'],
-            user=self.connect_conf['user'],
-            password=self.connect_conf['password'],
-            host=self.connect_conf['host'],
-            port=self.connect_conf['port']
+            dbname=connect_conf['dbname'],
+            user=connect_conf['user'],
+            password=connect_conf['password'],
+            host=connect_conf['host'],
+            port=connect_conf['port']
         )
 
         self.connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         self.connection.autocommit = True
-        self.cursor = self.connection.cursor()
+        self._cursor = self.connection.cursor()
+        
+        signal.signal(signal.SIGINT, self.handle_sigint)
 
-        signal.signal(signal.SIGINT, self.close)
+    
+    def get_cursor(self):
+        if not self._cursor:
+            self.connect()
+            self._initialized = True
 
-    def close(self, signum, frame):
-        if self.cursor:
-            self.cursor.close()
-        if self.connection:
-            self.connection.close()
+        return self._cursor
 
-        print('подключение закрыто')
 
+    def handle_sigint(self, signum, frame):
+        self.close()
         sys.exit(0)
+
+
+    def close(self):
+        if hasattr(self, 'cursor') and self._cursor:
+            self._cursor.close()
+        if hasattr(self, 'connection') and self.connection:
+            self.connection.close()
