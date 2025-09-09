@@ -1,27 +1,22 @@
-from psycopg2 import sql
-
 from app.db.dbConnector import DbConnector
-
-
 
 class RecordManager():
     def __init__(self, table_name):
-        self.cursor = DbConnector().get_cursor()
+        
+        self.connection, self.cursor = DbConnector().get()
 
         self.table_name = table_name
-    
+
+
     def check(self, conditions):
         columns = conditions.keys()
         values = [conditions[column] for column in columns]
 
-        placeholders = ", ".join(["%s"] * len(values))
-        columns_str = ", ".join(columns)
+        condition_str = " AND ".join([f"{col} = ?" for col in columns])
 
-        query = f"SELECT 1 FROM {self.table_name} WHERE ({columns_str}) = ({placeholders})"
-
+        query = f"SELECT 1 FROM {self.table_name} WHERE {condition_str} LIMIT 1"
         self.cursor.execute(query, values)
         exists = self.cursor.fetchone() is not None
-
         return exists
 
 
@@ -29,38 +24,28 @@ class RecordManager():
         columns = data.keys()
         values = [data[column] for column in columns]
 
-        placeholders = ", ".join(["%s"] * len(values))
+        placeholders = ", ".join(["?"] * len(values))
         columns_str = ", ".join(columns)
-        
-        query = f"INSERT INTO {self.table_name}({columns_str}) VALUES ({placeholders}) RETURNING id"
+
+        query = f"INSERT INTO {self.table_name} ({columns_str}) VALUES ({placeholders})"
         self.cursor.execute(query, values)
+        self.connection.commit()
 
-        id = self.cursor.fetchone()[0]
-
-        return id
+        return self.cursor.lastrowid
 
 
     def delete(self, id):
-        self.cursor.execute(f"DELETE FROM {self.table_name} WHERE id = %s", (id,))
-    
+        query = f"DELETE FROM {self.table_name} WHERE id = ?"
+        self.cursor.execute(query, (id,))
+        self.connection.commit()
+
 
     def update(self, update_fields, id):
-        set_clause = sql.SQL(", ").join(
-            sql.SQL("{} = %s").format(sql.Identifier(k)) for k in update_fields.keys()
-        )
-
-
-        query = sql.SQL("UPDATE {table_name} SET {set_clause} WHERE id = {id}").format(
-            table_name=sql.Identifier(self.table_name),
-            set_clause=set_clause,
-            condition=sql.SQL(id)
-        )
-
-
-        values = list(update_fields.values())
-
-        # Выполняем запрос
+        set_clause = ", ".join([f"{k} = ?" for k in update_fields.keys()])
+        values = list(update_fields.values()) + [id]
+        query = f"UPDATE {self.table_name} SET {set_clause} WHERE id = ?"
         self.cursor.execute(query, values)
+        self.connection.commit()
 
 
     def get(self, conditions=None):
@@ -68,23 +53,18 @@ class RecordManager():
             condition_clauses = []
             values = []
             for col, val in conditions.items():
-                condition_clauses.append(sql.SQL("{} = %s").format(sql.Identifier(col)))
+                condition_clauses.append(f"{col} = ?")
                 values.append(val)
-            where_clause = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(condition_clauses)
+            where_clause = " WHERE " + " AND ".join(condition_clauses)
         else:
-            where_clause = sql.SQL("")
+            where_clause = ""
             values = []
 
-        query = sql.SQL("SELECT * FROM {table_name}").format(
-            table_name=sql.Identifier(self.table_name)
-        )
-        query += where_clause
-
+        query = f"SELECT * FROM {self.table_name}{where_clause}"
         self.cursor.execute(query, values)
         rows = self.cursor.fetchall()
 
-        col_names = [desc[0] for desc in self.cursor.description]
+        col_names = [description[0] for description in self.cursor.description]
 
         result_list = [dict(zip(col_names, row)) for row in rows]
-
         return result_list
